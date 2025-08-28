@@ -1,0 +1,75 @@
+# Copyright (c) 2019, 2025 Oracle and/or its affiliates.
+#
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+#
+# ORACLE DOCKERFILES PROJECT
+# --------------------------
+# This is the Dockerfile for Oracle Server JRE 8 on Oracle Linux 8
+#
+# ARGS
+# ----
+# Este Dockerfile não requer mais um token de download. Em vez disso, coloque o
+# tarball local `server-jre-8u451-linux-x64.tar.gz` no contexto de build (mesma
+# pasta onde este Dockerfile está) antes de executar o build.
+#
+# REQUIRED FILES TO BUILD THIS IMAGE
+# ----------------------------------
+# O builder usará o tarball local: `server-jre-8u451-linux-x64.tar.gz`.
+#
+# HOW TO BUILD THIS IMAGE
+# -----------------------
+# Run:
+#      $ docker build --file Dockerfile.ol8 --tag oracle/serverjre:8 .
+#
+# The builder image will be used to uncompress the tar.gz file with the Java Runtime.
+
+FROM oraclelinux:8 AS builder
+
+LABEL maintainer="Aurelio Garcia-Ribeyro <aurelio.garciaribeyro@oracle.com>"
+
+# Since the files is compressed as tar.gz first yum install tar. gzip is already in oraclelinux:8
+RUN dnf install -y tar
+
+# Default to UTF-8 file.encoding
+ENV LANG=en_US.UTF-8
+
+# Environment variables for the builder image.
+ENV JAVA_HOME=/usr/java/jdk-8
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# Use local tarball present in the build context. Ensure server-jre-8u451-linux-x64.tar.gz
+# is in the same folder where you run 'docker build'.
+COPY server-jre-8u451-linux-x64.tar.gz /tmp/jdk.tgz
+
+RUN set -eux; \
+    mkdir -p "$JAVA_HOME"; \
+    tar --extract --file /tmp/jdk.tgz --directory "$JAVA_HOME" --strip-components 1; \
+    rm -f /tmp/jdk.tgz
+
+## Get a fresh version of Oracle Linux 8 for the final image
+
+FROM oraclelinux:8
+
+# Default to UTF-8 file.encoding
+ENV LANG=en_US.UTF-8
+ENV JAVA_HOME=/usr/java/jdk-8
+ENV PATH=$JAVA_HOME/bin:$PATH
+
+# Copy the uncompressed Java Runtime from the builder image
+COPY --from=builder $JAVA_HOME $JAVA_HOME
+
+##
+RUN dnf -y update; \
+    rm -rf /var/cache/dnf; \
+    ln -sfT "$JAVA_HOME" /usr/java/default; \
+    ln -sfT "$JAVA_HOME" /usr/java/latest; \
+    for bin in "$JAVA_HOME/bin/"*; do \
+    base="$(basename "$bin")"; \
+    [ ! -e "/usr/bin/$base" ]; \
+    alternatives --install "/usr/bin/$base" "$base" "$bin" 20000; \
+    done; \
+    # -Xshare:dump will create a CDS archive to improve startup in subsequent runs
+    # the file will be stored as /usr/java/jdk-8/jre/lib/amd64/server/classes.jsa
+    # See https://docs.oracle.com/javase/8/docs/technotes/guides/vm/class-data-sharing.html
+    java -Xshare:dump;
